@@ -59,9 +59,20 @@ function Read-HubcapConfig {
     }
 
     if ([string]::IsNullOrWhiteSpace($config.HubcapApiKey)) { throw "HubcapApiKey is missing in $ConfigPath" }
-    if ([string]::IsNullOrWhiteSpace($config.HubcapLuaDir)) { throw "HubcapLuaDir is missing in $ConfigPath" }
 
     return $config
+}
+
+# Same rules as HubcapTools: empty -> <Steam>\config\hubcap-lua,
+# relative path -> resolved against the Steam folder, absolute path used as-is.
+function Resolve-HubcapLuaDir {
+    param([string]$Value, [string]$SteamRoot)
+
+    if ($Value -and $Value.StartsWith("#")) { $Value = "" }
+    if ([string]::IsNullOrWhiteSpace($Value)) { return (Join-Path $SteamRoot "config\hubcap-lua") }
+    $expanded = [Environment]::ExpandEnvironmentVariables($Value)
+    if ([System.IO.Path]::IsPathRooted($expanded)) { return $expanded }
+    return (Join-Path $SteamRoot ($expanded -replace '^\.[\\/]', ''))
 }
 
 function Get-ManifestFiles {
@@ -174,7 +185,7 @@ try {
     $steamRoot = Get-SteamRoot
     $configPath = Join-Path $steamRoot "config\hubcaptools\config.yaml"
     $config = Read-HubcapConfig -ConfigPath $configPath
-    $luaDir = [Environment]::ExpandEnvironmentVariables($config.HubcapLuaDir)
+    $luaDir = Resolve-HubcapLuaDir -Value $config.HubcapLuaDir -SteamRoot $steamRoot
 
     if ($UserStats) {
         try {

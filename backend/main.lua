@@ -147,6 +147,20 @@ local function parse_config(lines)
     return config
 end
 
+-- Same rules as HubcapTools: empty -> <Steam>\config\hubcap-lua,
+-- relative path -> resolved against the Steam folder, absolute path used as-is.
+local function resolve_lua_dir(value)
+    value = tostring(value or "")
+    if value:sub(1, 1) == "#" then value = "" end
+    if value == "" then
+        return steam_root() .. "\\config\\hubcap-lua"
+    end
+    if value:match("^%a:[/\\]") or value:match("^[/\\][/\\]") then
+        return value
+    end
+    return steam_root() .. "\\" .. value:gsub("^%.[/\\]", "")
+end
+
 local function read_hubcap_config()
     local lines, path, err = read_config_lines()
     if lines == nil then return nil, err end
@@ -154,9 +168,7 @@ local function read_hubcap_config()
     if config.HubcapApiKey == nil or config.HubcapApiKey == "" then
         return nil, "HubcapApiKey is missing in " .. path
     end
-    if config.HubcapLuaDir == nil or config.HubcapLuaDir == "" then
-        return nil, "HubcapLuaDir is missing in " .. path
-    end
+    config.HubcapLuaDir = resolve_lua_dir(config.HubcapLuaDir)
     return config, nil
 end
 
