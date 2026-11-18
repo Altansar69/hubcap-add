@@ -35,17 +35,30 @@ const STRINGS={
   indonesian:{intro:"Tambahkan game ke pustaka Steam langsung dari halamannya.",ready:"Hubcap siap.",notInstalled:"Hubcap belum terpasang. Jalankan hubcaptools sekali lalu kembali.",saved:"Kunci tersimpan: ",yourKey:"Kunci Hubcap kamu",placeholder:"tempel kunci di sini",save:"Simpan",saving:"Menyimpan...",savedOk:"Kunci tersimpan",where:"Kamu bisa menemukannya di hubcapmanifest.com, bagian API Keys.",quotaReached:"Kuota harian habis, coba lagi besok.",quota:"Hari ini: {used} / {limit} unduhan",quotaNone:"Kuota: —",loading:"Memuat..."},
 };
 
-function lang(){
-  try{const value=SteamClient.Settings.GetLanguage();if(value)return String(value).toLowerCase()}catch(err){}
-  return String(navigator.language||"english").toLowerCase();
+const ISO_LANGS={en:"english",fr:"french",de:"german",es:"spanish","es-419":"latam",it:"italian",pt:"portuguese","pt-br":"brazilian",ru:"russian",pl:"polish",nl:"dutch",da:"danish",sv:"swedish",no:"norwegian",nb:"norwegian",nn:"norwegian",fi:"finnish",cs:"czech",hu:"hungarian",ro:"romanian",bg:"bulgarian",el:"greek",tr:"turkish",uk:"ukrainian",ja:"japanese",ko:"koreana",zh:"schinese","zh-cn":"schinese","zh-sg":"schinese","zh-hans":"schinese","zh-tw":"tchinese","zh-hk":"tchinese","zh-hant":"tchinese",th:"thai",vi:"vietnamese",id:"indonesian"};
+
+function resolveLang(value){
+  if(typeof value!=="string")return null;
+  const v=value.trim().toLowerCase().replace(/_/g,"-");
+  if(!v)return null;
+  if(STRINGS[v])return v;
+  if(ISO_LANGS[v])return ISO_LANGS[v];
+  if(v.startsWith("es-")&&v!=="es-es")return "latam";
+  const base=v.split("-")[0];
+  return ISO_LANGS[base]||null;
 }
 
-function table(){
-  const current=lang();
-  if(STRINGS[current])return STRINGS[current];
-  for(const key of Object.keys(STRINGS))if(current.startsWith(key.slice(0,4)))return STRINGS[key];
-  return STRINGS.english;
+function lang(){
+  const candidates=[];
+  try{const m=document.cookie.match(/(?:^|;\s*)Steam_Language=([^;]+)/);if(m)candidates.push(decodeURIComponent(m[1]))}catch(err){}
+  try{candidates.push(SteamClient.Settings.GetLanguage())}catch(err){}
+  try{candidates.push(document.documentElement.lang)}catch(err){}
+  try{candidates.push(...(navigator.languages||[]),navigator.language)}catch(err){}
+  for(const value of candidates){const found=resolveLang(value);if(found)return found}
+  return "english";
 }
+
+function table(){return STRINGS[lang()]||STRINGS.english}
 
 function t(key,vars){
   let value=table()[key]||STRINGS.english[key];

@@ -42,17 +42,30 @@ const STRINGS={
   indonesian:{add:"Tambahkan ke pustaka saya",remove:"Hapus dari pustaka saya",adding:"Menambahkan...",removing:"Menghapus...",added:"Ditambahkan - mulai ulang Steam",removed:"Dihapus - mulai ulang Steam",errKey:"Kunci Hubcap tidak valid",errQuota:"Kuota harian habis",errUnavailable:"Game belum tersedia",errConfig:"Jalankan hubcaptools sekali",errNoKey:"Tambahkan kunci di pengaturan",errCorrupt:"Unduhan rusak, coba lagi",errGeneric:"Terjadi kesalahan",drmTitle:"Perlindungan tambahan",drmBody:"Game ini memakai perlindungan tambahan ({drm}). Kamu harus mengunduh crack terpisah dan menerapkannya setelah instalasi.",continue:"Lanjutkan",cancel:"Batal",dlc:"Buka DLC",dlcRemove:"Hapus DLC",dlcAdding:"Membuka DLC...",dlcRemoving:"Menghapus DLC...",dlcAdded:"DLC dibuka - mulai ulang Steam",dlcRemoved:"DLC dihapus - mulai ulang Steam",dlcNone:"Game ini tidak punya DLC"},
 };
 
-function lang(){
-  try{const value=SteamClient.Settings.GetLanguage();if(value)return String(value).toLowerCase()}catch(err){}
-  return String(navigator.language||"english").toLowerCase();
+const ISO_LANGS={en:"english",fr:"french",de:"german",es:"spanish","es-419":"latam",it:"italian",pt:"portuguese","pt-br":"brazilian",ru:"russian",pl:"polish",nl:"dutch",da:"danish",sv:"swedish",no:"norwegian",nb:"norwegian",nn:"norwegian",fi:"finnish",cs:"czech",hu:"hungarian",ro:"romanian",bg:"bulgarian",el:"greek",tr:"turkish",uk:"ukrainian",ja:"japanese",ko:"koreana",zh:"schinese","zh-cn":"schinese","zh-sg":"schinese","zh-hans":"schinese","zh-tw":"tchinese","zh-hk":"tchinese","zh-hant":"tchinese",th:"thai",vi:"vietnamese",id:"indonesian"};
+
+function resolveLang(value){
+  if(typeof value!=="string")return null;
+  const v=value.trim().toLowerCase().replace(/_/g,"-");
+  if(!v)return null;
+  if(STRINGS[v])return v;
+  if(ISO_LANGS[v])return ISO_LANGS[v];
+  if(v.startsWith("es-")&&v!=="es-es")return "latam";
+  const base=v.split("-")[0];
+  return ISO_LANGS[base]||null;
 }
 
-function table(){
-  const current=lang();
-  if(STRINGS[current])return STRINGS[current];
-  for(const key of Object.keys(STRINGS))if(current.startsWith(key.slice(0,4)))return STRINGS[key];
-  return STRINGS.english;
+function lang(){
+  const candidates=[];
+  try{const m=document.cookie.match(/(?:^|;\s*)Steam_Language=([^;]+)/);if(m)candidates.push(decodeURIComponent(m[1]))}catch(err){}
+  try{candidates.push(SteamClient.Settings.GetLanguage())}catch(err){}
+  try{candidates.push(document.documentElement.lang)}catch(err){}
+  try{candidates.push(...(navigator.languages||[]),navigator.language)}catch(err){}
+  for(const value of candidates){const found=resolveLang(value);if(found)return found}
+  return "english";
 }
+
+function table(){return STRINGS[lang()]||STRINGS.english}
 
 function t(key){return table()[key]||STRINGS.english[key]}
 
@@ -74,25 +87,26 @@ function createButton(id,label,icon){
   a.id=id;
   a.className="btnv6_blue_hoverfade btn_medium";
   a.style.marginRight="0.28em";
-  a.style.height="32px";
-  a.style.padding="0 12px";
   a.title=label;
   const span=document.createElement("span");
   span.dataset.tooltipText=label;
-  span.style.display="inline-flex";
-  span.style.alignItems="center";
-  span.style.gap="7px";
   const img=document.createElement("img");
   img.className="ico16";
   img.src=icon;
-  img.style.cssText="width:20px;height:20px;vertical-align:middle;background:none";
+  img.style.cssText="width:16px;height:16px;vertical-align:middle;background:none";
   const text=document.createElement("span");
   text.textContent=label;
-  text.style.fontSize="14px";
+  text.style.cssText="margin-left:6px;vertical-align:middle";
   span.appendChild(img);
   span.appendChild(text);
   a.appendChild(span);
   return a;
+}
+
+function htmlToText(html){
+  const withBreaks=String(html).replace(/<br\s*\/?>/gi,", ");
+  const text=new DOMParser().parseFromString(withBreaks,"text/html").body.textContent||"";
+  return text.replace(/\s+/g," ").replace(/(,\s*)+/g,", ").replace(/^[,\s]+|[,\s]+$/g,"");
 }
 
 async function getDrm(appId){
@@ -100,7 +114,7 @@ async function getDrm(appId){
     const res=await fetch("/api/appdetails?appids="+appId);
     const data=await res.json();
     const entry=data&&data[appId];
-    if(entry&&entry.success&&entry.data&&entry.data.drm_notice)return String(entry.data.drm_notice);
+    if(entry&&entry.success&&entry.data&&entry.data.drm_notice)return htmlToText(entry.data.drm_notice);
   }catch(err){}
   const body=document.body.innerText||"";
   if(/denuvo/i.test(body))return "Denuvo Anti-Tamper";
