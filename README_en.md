@@ -11,18 +11,18 @@
 > - **Using this plugin may not be allowed** by Steam’s terms of service: **action against your account cannot be ruled out**.
 > - You use it **at your own risk**. The software is provided **“as is”, without any warranty**.
 
-**Hubcap** is a [Millennium](https://steambrew.app/) plugin that adds an **“Add to my library”** button right on a game’s Steam store page, next to the page’s other buttons. One click, a Steam restart, and the game is in your library, without going through another tool.
+**Hubcap** is a [Millennium](https://steambrew.app/) plugin that adds an **“Add to my library”** button right on a game’s Steam store page, next to the page’s other buttons. One click, and the game shows up in your library instantly, without going through another tool.
 
 DLC unlock the same way, your Hubcap key is set in Millennium’s settings, and the interface speaks your Steam language.
 
 ## ✨ Features
 
 ### On the store page
-- **Add to my library**: downloads the game’s script and manifests from [hubcapmanifest.com](https://hubcapmanifest.com), then installs them in the right places (HubcapTool’s Lua folder and Steam’s `depotcache`). All that’s left is to restart Steam.
+- **Add to my library**: downloads the game’s script and manifests from [hubcapmanifest.com](https://hubcapmanifest.com), then installs them in the right places (HubcapTool’s Lua folder and Steam’s `depotcache`). The game shows up right away, no Steam restart needed.
 - **Remove from my library**: if the game is already added, the button turns red and removes the script and its manifests.
 - **Unlock the DLC**: on a game you already own that has DLC, the button only offers the DLC. They go into a separate file (`<appid>-dlc.lua`) and can be removed the same way, without touching the game.
 - **Extra protection**: before adding, the plugin reads the game’s page; if it uses third-party protection (Denuvo…), a dialog warns you that a separate fix will be needed after installing.
-- **A Steam-styled button**, aligned with the page’s other buttons (CS.RIN.RU Enhanced, SteamDB…), showing its live state: “Adding…”, “Added - restart Steam”, or the error in plain words.
+- **A Steam-styled button**, aligned with the page’s other buttons (CS.RIN.RU Enhanced, SteamDB…), showing its live state: “Adding…”, “Added”, or the error in plain words.
 - **Readable error messages**: invalid key, daily quota reached, game not available yet, HubcapTool not installed, corrupted download.
 
 ### In Millennium’s settings
@@ -52,7 +52,7 @@ The interface follows Steam’s language: **English, French, German, Spanish (Sp
 - **“Run hubcaptools once”**: HubcapTool’s `config.yaml` can’t be found. Run HubcapTool, then reload the page.
 - **“Invalid Hubcap key”** or **“Daily quota reached”**: check your key and quota in the plugin’s settings; the quota resets daily on Hubcap’s side.
 - **“Game not available yet”**: Hubcap doesn’t have this game’s files yet. Try again later.
-- **The game doesn’t appear in your library?** Fully restart Steam (right-click the tray icon → Exit), not just the window.
+- **The game doesn’t appear in your library?** It is normally hot-loaded. If it isn’t, fully restart Steam (right-click the tray icon → Exit).
 - **Connections**: only `hubcapmanifest.com` (downloads and quota, with your key) and the Steam store API (protection detection).
 - **Uninstalling**: disable **Hubcap** in Millennium, then delete the `<Steam>\millennium\plugins\hubcap-add` folder. Games already added stay in HubcapTool’s Lua folder: remove them with the button before uninstalling if you no longer want them.
 - **Found a bug?** Open an [issue](../../issues) with the game’s page and the message shown on the button.

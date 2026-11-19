@@ -11,18 +11,18 @@ Français | [English](README_en.md)
 > - **L’utilisation de ce plugin n’est pas forcément autorisée** par les conditions d’utilisation de Steam : **une sanction sur ton compte n’est pas à exclure**.
 > - Tu l’utilises **à tes risques et périls**. Le logiciel est fourni **« tel quel », sans aucune garantie**.
 
-**Hubcap** est un plugin [Millennium](https://steambrew.app/) qui ajoute un bouton **« Ajouter à ma bibliothèque »** directement sur la page magasin des jeux Steam, à côté des autres boutons de la page. Un clic, un redémarrage de Steam, et le jeu est dans ta bibliothèque, sans passer par un autre logiciel.
+**Hubcap** est un plugin [Millennium](https://steambrew.app/) qui ajoute un bouton **« Ajouter à ma bibliothèque »** directement sur la page magasin des jeux Steam, à côté des autres boutons de la page. Un clic, et le jeu apparaît dans ta bibliothèque instantanément, sans passer par un autre logiciel.
 
 Les DLC se débloquent de la même façon, ta clé Hubcap se règle dans les options de Millennium, et l’interface parle la langue de ton Steam.
 
 ## ✨ Fonctionnalités
 
 ### Sur la page magasin
-- **Ajouter à ma bibliothèque** : télécharge depuis [hubcapmanifest.com](https://hubcapmanifest.com) le script et les manifestes du jeu, puis les installe aux bons endroits (dossier Lua de HubcapTool et `depotcache` de Steam). Il ne reste qu’à redémarrer Steam.
+- **Ajouter à ma bibliothèque** : télécharge depuis [hubcapmanifest.com](https://hubcapmanifest.com) le script et les manifestes du jeu, puis les installe aux bons endroits (dossier Lua de HubcapTool et `depotcache` de Steam). Le jeu apparaît aussitôt, sans redémarrer Steam.
 - **Retirer de ma bibliothèque** : si le jeu est déjà ajouté, le bouton passe au rouge et retire le script et ses manifestes.
 - **Débloquer les DLC** : sur un jeu que tu possèdes déjà et qui a des DLC, le bouton propose uniquement les DLC. Ils vont dans un fichier séparé (`<appid>-dlc.lua`) et peuvent être retirés de la même façon, sans toucher au jeu.
 - **Protection supplémentaire** : avant l’ajout, le plugin lit la page du jeu ; s’il utilise une protection tierce (Denuvo…), une fenêtre te prévient qu’il faudra appliquer un correctif séparément après l’installation.
-- **Un bouton aux couleurs de Steam**, aligné avec les autres boutons de la page (CS.RIN.RU Enhanced, SteamDB…), avec son état en direct : « Ajout… », « Ajouté - redémarre Steam », ou l’erreur en clair.
+- **Un bouton aux couleurs de Steam**, aligné avec les autres boutons de la page (CS.RIN.RU Enhanced, SteamDB…), avec son état en direct : « Ajout… », « Ajouté », ou l’erreur en clair.
 - **Messages d’erreur lisibles** : clé invalide, quota du jour atteint, jeu pas encore disponible, HubcapTool pas installé, téléchargement corrompu.
 
 ### Dans les options de Millennium
@@ -52,7 +52,7 @@ L’interface suit la langue de Steam : **français, anglais, allemand, espagnol
 - **« Lance hubcaptools une fois »** : le fichier `config.yaml` de HubcapTool est introuvable. Lance HubcapTool, puis recharge la page.
 - **« Clé Hubcap invalide »** ou **« Quota du jour atteint »** : vérifie ta clé et ton quota dans les options du plugin ; le quota se réinitialise chaque jour côté Hubcap.
 - **« Jeu pas encore disponible »** : Hubcap n’a pas encore les fichiers de ce jeu. Réessaie plus tard.
-- **Le jeu n’apparaît pas dans la bibliothèque ?** Redémarre complètement Steam (clic droit sur l’icône → Quitter), pas seulement la fenêtre.
+- **Le jeu n’apparaît pas dans la bibliothèque ?** Il est normalement ajouté à chaud. Si ce n’est pas le cas, redémarre complètement Steam (clic droit sur l’icône → Quitter).
 - **Connexions** : uniquement `hubcapmanifest.com` (téléchargements et quota, avec ta clé) et l’API du magasin Steam (détection des protections).
 - **Désinstaller** : désactive **Hubcap** dans Millennium, puis supprime le dossier `<Steam>\millennium\plugins\hubcap-add`. Les jeux déjà ajoutés restent dans le dossier Lua de HubcapTool : retire-les avec le bouton avant de désinstaller si tu ne les veux plus.
 - **Un bug ?** Ouvre une [issue](../../issues) avec la page du jeu concerné et le message affiché sur le bouton.
