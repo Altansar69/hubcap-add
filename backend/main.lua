@@ -3,6 +3,7 @@ local millennium = require("millennium")
 local ffi = require("ffi")
 local json = require("json")
 local settings = require("settings")
+local fs = require("fs")
 
 ffi.cdef[[
 typedef unsigned long DWORD;
@@ -239,12 +240,58 @@ function Ping()
     return '{"success":true}'
 end
 
+-- Games Steam splits into separate apps, each with its own licence
+-- (e.g. Black Ops II campaign / multiplayer / zombies). Adding or removing
+-- one member also adds or removes the others. Checked against Steam appinfo:
+-- every companion pulls its depots from the main app (depotfromapp).
+local LINKED_APPS = {
+    { "202970", "202990", "212910" }, -- CoD Black Ops II: campaign, multiplayer, zombies
+    { "42700", "42710" },             -- CoD Black Ops: campaign, multiplayer
+    { "10180", "10190" },             -- CoD Modern Warfare 2 (2009): campaign, multiplayer
+    { "115300", "42680", "42690" },   -- CoD Modern Warfare 3 (2011): store page, campaign, multiplayer
+    { "209160", "209170" },           -- CoD Ghosts: campaign, multiplayer
+}
+
+local function with_linked_apps(app_id)
+    for _, group in ipairs(LINKED_APPS) do
+        for _, member in ipairs(group) do
+            if member == app_id then
+                local ids = { app_id }
+                for _, other in ipairs(group) do
+                    if other ~= app_id then ids[#ids + 1] = other end
+                end
+                return ids
+            end
+        end
+    end
+    return { app_id }
+end
+
+-- Runs the helper for the app and its linked apps. Succeeds when at least one
+-- of them worked; a linked app Hubcap doesn't have doesn't fail the whole call.
+local function run_for_group(app_id, extra_args)
+    local ids = with_linked_apps(app_id)
+    if #ids == 1 then return run_powershell("-AppId " .. quote(app_id) .. extra_args) end
+
+    local done, first_error = {}, nil
+    for _, id in ipairs(ids) do
+        local ok, result = pcall(json.decode, run_powershell("-AppId " .. quote(id) .. extra_args))
+        if ok and type(result) == "table" and result.success then
+            done[#done + 1] = id
+        elseif first_error == nil then
+            first_error = (ok and type(result) == "table" and result.error) or "Helper returned invalid output."
+        end
+    end
+    if #done == 0 then return json.encode({ success = false, error = first_error }) end
+    return json.encode({ success = true, appId = app_id, apps = done })
+end
+
 function AddGame(payload)
     local app_id = app_id_from_payload(payload)
     if app_id == nil then
         return '{"success":false,"error":"Invalid Steam app id"}'
     end
-    return run_powershell("-AppId " .. quote(app_id))
+    return run_for_group(app_id, "")
 end
 
 function DeleteGame(payload)
@@ -252,7 +299,7 @@ function DeleteGame(payload)
     if app_id == nil then
         return '{"success":false,"error":"Invalid Steam app id"}'
     end
-    return run_powershell("-AppId " .. quote(app_id) .. " -DeleteLua -DeleteManifest")
+    return run_for_group(app_id, " -DeleteLua -DeleteManifest")
 end
 
 function AddDlc(payload)
@@ -275,19 +322,13 @@ local function has_dlc_section(path, app_id)
     local file = io.open(path, "r")
     if file == nil then return false end
     local found = false
+    -- a DLC is a keyless addappid(<id>) for another app; header comments
+    -- such as "-- Total DLCs: 0" don't count
     for line in file:lines() do
-        local marker = line:match("^%s*%-%-%s*(.+)$")
-        if marker then
-            if marker:upper():find("DLC", 1, true) then
-                found = true
-                break
-            end
-        else
-            local keyless = line:match("^%s*addappid%(%s*(%d+)%s*%)")
-            if keyless and keyless ~= app_id then
-                found = true
-                break
-            end
+        local keyless = line:match("^%s*addappid%(%s*(%d+)%s*%)")
+        if keyless and keyless ~= app_id then
+            found = true
+            break
         end
     end
     file:close()
@@ -305,8 +346,10 @@ function CheckLua(payload)
     end
 
     local path = config.HubcapLuaDir .. "\\" .. app_id .. ".lua"
-    local dlc_path = config.HubcapLuaDir .. "\\" .. app_id .. "-dlc.lua"
-    local dlc_exists = file_exists(dlc_path) or has_dlc_section(path, app_id)
+    -- HubcapTools loads <appid>_dlc.lua; <appid>-dlc.lua is the old (ignored) name
+    local dlc_exists = file_exists(config.HubcapLuaDir .. "\\" .. app_id .. "_dlc.lua")
+        or file_exists(config.HubcapLuaDir .. "\\" .. app_id .. "-dlc.lua")
+        or has_dlc_section(path, app_id)
 
     return '{"success":true,"appId":"' .. app_id .. '","exists":' .. tostring(file_exists(path)) ..
         ',"dlcExists":' .. tostring(dlc_exists) .. '}'
@@ -314,6 +357,321 @@ end
 
 function GetUsage()
     return run_powershell("-UserStats")
+end
+
+-- Games added through the plugin: every <appid>.lua in the hubcap-lua folder
+function ListAddedGames()
+    local lines = read_config_lines()
+    local dir = resolve_lua_dir(lines and parse_config(lines).HubcapLuaDir or "")
+    local ok, entries = pcall(fs.list, dir)
+    if not ok or type(entries) ~= "table" then
+        return json.encode({ success = true, apps = {} })
+    end
+    local apps, names = {}, {}
+    for _, entry in ipairs(entries) do
+        local name = tostring(entry.name or entry.path or ""):match("([^/\\]+)$") or ""
+        names[name] = true
+        local id = name:match("^(%d+)%.lua$")
+        if id and entry.is_file ~= false then apps[#apps + 1] = id end
+    end
+    -- same rule as CheckLua: a DLC file, or DLC entries inside the game's own script
+    -- also covers owned games whose DLC were unlocked (a DLC file but no game script)
+    local dlc_unlocked, seen = {}, {}
+    for name in pairs(names) do
+        local id = name:match("^(%d+)_dlc%.lua$") or name:match("^(%d+)%-dlc%.lua$")
+        if id and not seen[id] then seen[id] = true; dlc_unlocked[#dlc_unlocked + 1] = id end
+    end
+    for _, id in ipairs(apps) do
+        if not seen[id] and has_dlc_section(dir .. "\\" .. id .. ".lua", id) then
+            seen[id] = true
+            dlc_unlocked[#dlc_unlocked + 1] = id
+        end
+    end
+    return json.encode({ success = true, apps = apps, dlcUnlocked = dlc_unlocked })
+end
+
+-- Scalar HubcapTools settings editable from the Millennium panel.
+local TOOL_SETTINGS = {
+    AutoUpdate = "bool", DisableFamilyShareLock = "bool", PlayNotOwnedGames = "bool",
+    UseWhitelist = "bool", AutoFilterList = "bool", DlcAutoUnlockUseWhitelist = "bool",
+    HubcapTicketFetch = "bool", HubcapTicketSpoof = "bool", HubcapLuaDir = "string",
+    Notifications = "bool", NotifyInit = "bool", ToastsErrorOnly = "bool",
+    AchievementsLanguage = "word", AchievementsMaxAgeDays = "int", SteamAPIKey = "string",
+    FakeEmail = "string", FakeWalletBalance = "int", ["CloudSave.Enabled"] = "bool",
+    DepotKeysFile = "string", AppTokensFile = "string",
+    ["RemoteApi.Enabled"] = "bool", ["RemoteApi.Port"] = "int", ["RemoteApi.BindAddress"] = "string",
+    ["RemoteApi.Token"] = "string", ["RemoteApi.Tls"] = "bool",
+    LogLevel = "int", LogTimestamped = "bool", ExtendedLogging = "bool", LogCategories = "string",
+}
+
+local function read_yaml_scalar(raw)
+    raw = tostring(raw or ""):match("^%s*(.-)%s*$") or ""
+    if raw:sub(1, 1) == "'" and raw:sub(-1) == "'" and #raw >= 2 then
+        return (raw:sub(2, -2):gsub("''", "'"))
+    end
+    if raw:sub(1, 1) == '"' and raw:sub(-1) == '"' and #raw >= 2 then
+        return (raw:sub(2, -2):gsub('\\(.)', "%1"))
+    end
+    return (raw:gsub("%s+#.*$", ""))
+end
+
+local function render_setting(kind, value)
+    if kind == "bool" then
+        if value == true or value == "yes" or value == "true" or value == 1 then return "yes" end
+        return "no"
+    end
+    if kind == "int" then
+        local number = tonumber(value)
+        if number == nil or number < 0 or number ~= math.floor(number) then return nil end
+        return string.format("%d", number)
+    end
+    value = tostring(value or ""):match("^%s*(.-)%s*$")
+    if value:find("[\r\n]") then return nil end
+    if kind == "word" then
+        if not value:match("^[%w_]+$") then return nil end
+        return value
+    end
+    -- single-quoted YAML: no escape sequences, so Windows paths stay intact
+    return "'" .. value:gsub("'", "''") .. "'"
+end
+
+-- A key's block = the indented (or "- ") lines right after "Key:".
+local function is_block_line(line)
+    line = line:gsub("\r$", "")
+    return line:match("^%s+%S") ~= nil or line:match("^%-") ~= nil
+end
+
+local function key_pattern(key)
+    return "^" .. key:gsub("%.", "%%.") .. "%s*:"
+end
+
+-- Replaces the "Key: ..." line and its block with new_lines (first one is the key line).
+local function write_config_lines(key, new_lines)
+    local lines, path, err = read_config_lines()
+    if lines == nil then return false, err end
+
+    local pattern = key_pattern(key)
+    local out, replaced, index = {}, false, 1
+    while index <= #lines do
+        local line = lines[index]
+        if not replaced and line:match(pattern) then
+            for _, new_line in ipairs(new_lines) do out[#out + 1] = new_line end
+            replaced = true
+            index = index + 1
+            while index <= #lines and is_block_line(lines[index]) do index = index + 1 end
+        else
+            out[#out + 1] = line
+            index = index + 1
+        end
+    end
+    if not replaced then
+        for _, new_line in ipairs(new_lines) do out[#out + 1] = new_line end
+    end
+    lines = out
+
+    -- keep the file's own line endings (HubcapTools writes LF)
+    local eol = "\n"
+    local source = io.open(path, "rb")
+    if source ~= nil then
+        if (source:read(4096) or ""):find("\r\n", 1, true) then eol = "\r\n" end
+        source:close()
+    end
+    for index, line in ipairs(lines) do lines[index] = line:gsub("\r$", "") end
+
+    local file, open_err = io.open(path, "wb")
+    if file == nil then return false, open_err or "cannot write config" end
+    file:write(table.concat(lines, eol) .. eol)
+    file:close()
+    return true, nil
+end
+
+local function write_config_value(key, rendered)
+    return write_config_lines(key, { key .. ": " .. rendered })
+end
+
+---------------------------------------------------------------------------
+-- List / map HubcapTools settings.
+--   ids        - list of numbers               Key:\n  - 440
+--   num_map    - number -> number              Key:\n  440: 730
+--   str_map    - number -> text                Key:\n  440: 'Name'
+--   status     - { AppId = n, Title = text }   Key:\n  AppId: 0\n  Title: ''
+--   dlc_map    - parent -> { dlc -> name }     Key:\n  440:\n    441: 'DLC'
+--   owner_map  - account -> list of ids        Key:\n  1234:\n    - 440
+---------------------------------------------------------------------------
+local TOOL_LISTS = {
+    AppIds = "ids", AdditionalApps = "ids", AdditionalDepots = "ids", AdditionalPackages = "ids",
+    AdditionalAppsDLC = "ids", UnlockPreload = "ids", KeepUpdates = "ids", FakeOffline = "ids",
+    LegacyFakeAppIds = "ids", BlockedSteamIds = "ids", SteamStubBlacklist = "ids",
+    TicketSpoofBlacklist = "ids", EosDeviceIdApps = "ids", EosAntiCheatBypassApps = "ids",
+    DlcAutoUnlockWhitelist = "ids", DlcAutoUnlockBlacklist = "ids", PluginTraceApps = "ids",
+    AppTokens = "num_map", FakeAppIds = "num_map", SubscriptionTimestamps = "num_map",
+    PlaytimeOverrides = "num_map", GameTitles = "str_map", LegacyCDKeys = "str_map",
+    IdleStatus = "status", UnownedStatus = "status", DlcData = "dlc_map", DenuvoGames = "owner_map",
+}
+
+local function indent_of(line) return #(line:match("^(%s*)")) end
+
+-- Parses an indented YAML block (lists and maps, nested at most twice).
+local function parse_yaml_block(block, first, last)
+    local base = nil
+    local list, map, order = {}, {}, {}
+    local index = first
+    while index <= last do
+        local line = block[index]
+        local indent = indent_of(line)
+        if base == nil then base = indent end
+        local item = line:match("^%s*%-%s*(.-)%s*$")
+        if item ~= nil and indent == base then
+            list[#list + 1] = read_yaml_scalar(item)
+            index = index + 1
+        else
+            local key, value = line:match("^%s*([^:#]-)%s*:%s*(.-)%s*$")
+            index = index + 1
+            if key ~= nil and indent == base then
+                key = read_yaml_scalar(key)
+                if value ~= "" and value:sub(1, 1) ~= "#" then
+                    map[key] = read_yaml_scalar(value)
+                else
+                    local child_first = index
+                    while index <= last and indent_of(block[index]) > base do index = index + 1 end
+                    map[key] = parse_yaml_block(block, child_first, index - 1)
+                end
+                order[#order + 1] = key
+            end
+        end
+    end
+    if #list > 0 then return list end
+    local ordered = {}
+    for _, key in ipairs(order) do ordered[#ordered + 1] = { key, map[key] } end
+    return ordered
+end
+
+-- Returns the block of a list setting as { { key, value }... } or { item... }.
+local function read_list_setting(lines, key)
+    local pattern = key_pattern(key)
+    for index, line in ipairs(lines) do
+        if line:match(pattern) then
+            local inline = line:match(":%s*(.-)%s*$") or ""
+            local block, cursor = {}, index + 1
+            while cursor <= #lines and is_block_line(lines[cursor]) do
+                local entry = lines[cursor]:gsub("\r$", "")
+                if not entry:match("^%s*#") then block[#block + 1] = entry end
+                cursor = cursor + 1
+            end
+            if #block == 0 then
+                -- flow style "Key: [1, 2]" or empty
+                local items = {}
+                for value in (inline:match("^%[(.*)%]$") or ""):gmatch("[^,]+") do
+                    items[#items + 1] = read_yaml_scalar(value)
+                end
+                return items
+            end
+            return parse_yaml_block(block, 1, #block)
+        end
+    end
+    return {}
+end
+
+local function to_entries(kind, parsed)
+    -- normalise to plain JSON-friendly shapes for the panel
+    if kind == "ids" then
+        local ids = {}
+        for _, value in ipairs(parsed) do
+            if type(value) == "string" then ids[#ids + 1] = value end
+        end
+        return ids
+    end
+    local entries = {}
+    for _, pair in ipairs(parsed) do
+        if type(pair) == "table" and pair[1] ~= nil then
+            local key, value = pair[1], pair[2]
+            if kind == "dlc_map" and type(value) == "table" then
+                for _, dlc in ipairs(value) do
+                    if type(dlc) == "table" then entries[#entries + 1] = { key, dlc[1], tostring(dlc[2] or "") } end
+                end
+            elseif kind == "owner_map" and type(value) == "table" then
+                local ids = {}
+                for _, id in ipairs(value) do if type(id) == "string" then ids[#ids + 1] = id end end
+                entries[#entries + 1] = { key, table.concat(ids, ", ") }
+            elseif type(value) ~= "table" then
+                entries[#entries + 1] = { key, value }
+            end
+        end
+    end
+    return entries
+end
+
+local function quote_text(value)
+    return "'" .. tostring(value):gsub("'", "''") .. "'"
+end
+
+local function digits(value)
+    value = tostring(value or ""):match("^%s*(.-)%s*$")
+    return value:match("^%d+$")
+end
+
+-- Validates the panel's entries and renders the YAML block, or returns nil, error.
+local function render_list(key, kind, entries)
+    if type(entries) ~= "table" then return nil, "Invalid value" end
+    local out = { key .. ":" }
+    for position, entry in ipairs(entries) do
+        local where = "line " .. position .. ": "
+        if kind == "ids" then
+            local id = digits(entry)
+            if id == nil then return nil, where .. "not a number" end
+            out[#out + 1] = "  - " .. id
+        elseif type(entry) ~= "table" then
+            return nil, where .. "invalid entry"
+        elseif kind == "num_map" then
+            local id, value = digits(entry[1]), digits(entry[2])
+            if id == nil or value == nil then return nil, where .. "expected <number> = <number>" end
+            out[#out + 1] = "  " .. id .. ": " .. value
+        elseif kind == "str_map" then
+            local id, value = digits(entry[1]), tostring(entry[2] or "")
+            if id == nil or value:find("[\r\n]") then return nil, where .. "expected <number> = <text>" end
+            out[#out + 1] = "  " .. id .. ": " .. quote_text(value)
+        elseif kind == "status" then
+            local name, value = tostring(entry[1] or ""), entry[2]
+            if name == "AppId" then
+                value = digits(value)
+                if value == nil then return nil, "AppId: not a number" end
+                out[#out + 1] = "  AppId: " .. value
+            elseif name == "Title" then
+                value = tostring(value or "")
+                if value:find("[\r\n]") then return nil, "Title: invalid text" end
+                out[#out + 1] = "  Title: " .. quote_text(value)
+            end
+        end
+    end
+    if kind == "dlc_map" then
+        local parents, by_parent = {}, {}
+        for position, entry in ipairs(entries) do
+            local parent, dlc, name = digits(entry[1]), digits(entry[2]), tostring(entry[3] or "")
+            if type(entry) ~= "table" or parent == nil or dlc == nil or name:find("[\r\n]") then
+                return nil, "line " .. position .. ": expected <game> / <dlc> = <name>"
+            end
+            if by_parent[parent] == nil then
+                by_parent[parent] = {}
+                parents[#parents + 1] = parent
+            end
+            table.insert(by_parent[parent], "    " .. dlc .. ": " .. quote_text(name))
+        end
+        for _, parent in ipairs(parents) do
+            out[#out + 1] = "  " .. parent .. ":"
+            for _, line in ipairs(by_parent[parent]) do out[#out + 1] = line end
+        end
+    elseif kind == "owner_map" then
+        for position, entry in ipairs(entries) do
+            local owner = type(entry) == "table" and digits(entry[1])
+            if not owner then return nil, "line " .. position .. ": expected <account> = <id>, <id>" end
+            out[#out + 1] = "  " .. owner .. ":"
+            for id in tostring(entry[2] or ""):gmatch("[^,%s]+") do
+                if not id:match("^%d+$") then return nil, "line " .. position .. ": " .. id .. " is not a number" end
+                out[#out + 1] = "    - " .. id
+            end
+        end
+    end
+    return out, nil
 end
 
 function GetConfig()
@@ -347,33 +705,75 @@ function SetApiKey(payload)
         return '{"success":false,"error":"Empty key"}'
     end
 
-    local lines, path, err = read_config_lines()
-    if lines == nil then
+    local ok, err = write_config_value("HubcapApiKey", '"' .. key:gsub('[\\"]', "\\%0") .. '"')
+    if not ok then
         return '{"success":false,"error":"' .. json_escape(err) .. '"}'
     end
+    return '{"success":true}'
+end
 
-    local out = {}
-    local replaced = false
+function GetToolSettings()
+    local lines, _, err = read_config_lines()
+    if lines == nil then return json.encode({ success = false, error = err }) end
+    local values = {}
     for _, line in ipairs(lines) do
-        if line:match("^%s*HubcapApiKey%s*:") then
-            out[#out + 1] = 'HubcapApiKey: "' .. key:gsub('"', '\\"') .. '"'
-            replaced = true
-        else
-            out[#out + 1] = line
+        local key, raw = line:match("^([%w%.]+)%s*:%s*(.-)%s*$")
+        local kind = key and TOOL_SETTINGS[key]
+        if kind ~= nil then
+            local value = read_yaml_scalar(raw)
+            if kind == "bool" then
+                values[key] = value:lower() == "yes" or value:lower() == "true"
+            elseif kind == "int" then
+                values[key] = tonumber(value) or 0
+            else
+                values[key] = value
+            end
         end
     end
-    if not replaced then
-        out[#out + 1] = 'HubcapApiKey: "' .. key .. '"'
-    end
+    return json.encode({ success = true, values = values })
+end
 
-    local file, open_err = io.open(path, "w")
-    if file == nil then
-        return '{"success":false,"error":"' .. json_escape(open_err or "cannot write config") .. '"}'
+-- Millennium passes the callable's named arguments either as one table
+-- or as positional values (key, value) depending on its version.
+function SetToolSetting(key, value)
+    if type(key) == "table" then
+        key, value = key.key, key.value
     end
-    file:write(table.concat(out, "\r\n") .. "\r\n")
-    file:close()
+    key = tostring(key or "")
+    local kind = TOOL_SETTINGS[key]
+    if kind == nil then return json.encode({ success = false, error = "Unknown setting " .. key }) end
+    local rendered = render_setting(kind, value)
+    if rendered == nil then return json.encode({ success = false, error = "Invalid value" }) end
+    local ok, err = write_config_value(key, rendered)
+    return json.encode({ success = ok, error = err })
+end
 
-    return '{"success":true}'
+function GetToolLists()
+    local lines, _, err = read_config_lines()
+    if lines == nil then return json.encode({ success = false, error = err }) end
+    local lists = {}
+    for key, kind in pairs(TOOL_LISTS) do
+        local ok, parsed = pcall(read_list_setting, lines, key)
+        lists[key] = { kind = kind, entries = ok and to_entries(kind, parsed) or {} }
+    end
+    return json.encode({ success = true, lists = lists })
+end
+
+-- entries arrives as a JSON string so arrays survive the IPC untouched
+function SetToolList(key, entries)
+    if type(key) == "table" then key, entries = key.key, key.entries end
+    key = tostring(key or "")
+    local kind = TOOL_LISTS[key]
+    if kind == nil then return json.encode({ success = false, error = "Unknown setting " .. key }) end
+    if type(entries) == "string" then
+        local ok, decoded = pcall(json.decode, entries)
+        if not ok then return json.encode({ success = false, error = "Invalid value" }) end
+        entries = decoded
+    end
+    local rendered, render_err = render_list(key, kind, entries or {})
+    if rendered == nil then return json.encode({ success = false, error = render_err }) end
+    local ok, err = write_config_lines(key, rendered)
+    return json.encode({ success = ok, error = err })
 end
 
 function GetSettings()
@@ -415,8 +815,13 @@ return {
     DeleteDlc = DeleteDlc,
     CheckLua = CheckLua,
     GetUsage = GetUsage,
+    ListAddedGames = ListAddedGames,
     GetConfig = GetConfig,
     SetApiKey = SetApiKey,
+    GetToolSettings = GetToolSettings,
+    SetToolSetting = SetToolSetting,
+    GetToolLists = GetToolLists,
+    SetToolList = SetToolList,
     GetSettings = GetSettings,
     SaveSettings = SaveSettings,
 }

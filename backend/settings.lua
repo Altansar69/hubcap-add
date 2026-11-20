@@ -7,6 +7,14 @@ local M = {}
 
 M.DEFAULTS = {
     showOnOwned = false,
+    highlightLibrary = true,
+    highlightColor = "#5ec26a",
+    dlcUnlockedColor = "#b37cff",
+    dlcAvailableColor = "#ff9f43",
+    highlightDlcUnlocked = true,
+    highlightDlcAvailable = true,
+    menuRemove = true,
+    menuDlc = true,
 }
 
 local function get_dir()

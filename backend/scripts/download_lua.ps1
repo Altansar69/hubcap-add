@@ -75,6 +75,11 @@ function Resolve-HubcapLuaDir {
     return (Join-Path $SteamRoot ($expanded -replace '^\.[\\/]', ''))
 }
 
+function Write-LuaFile {
+    param([string]$Path, [string[]]$Lines)
+    [System.IO.File]::WriteAllLines($Path, [string[]]$Lines, (New-Object System.Text.UTF8Encoding($false)))
+}
+
 function Get-ManifestFiles {
     param([string]$Directory)
     if (-not (Test-Path -LiteralPath $Directory)) { return @() }
@@ -113,6 +118,7 @@ function Split-LuaSections {
     $base = New-Object System.Collections.Generic.List[string]
     $dlc = New-Object System.Collections.Generic.List[string]
     $depots = @()
+    $dlcIds = @()
     $inDlc = $false
 
     foreach ($line in Get-Content -LiteralPath $Path) {
@@ -126,7 +132,10 @@ function Split-LuaSections {
         }
 
         if (-not $isMarker -and $line -match '^\s*addappid\(\s*(\d+)\s*\)') {
-            if ($Matches[1] -ne $AppId) { $inDlc = $true }
+            if ($Matches[1] -ne $AppId) {
+                $inDlc = $true
+                $dlcIds += $Matches[1]
+            }
         }
 
         if ($inDlc) {
@@ -137,7 +146,8 @@ function Split-LuaSections {
         }
     }
 
-    return @{ Base = $base; Dlc = $dlc; Depots = $depots }
+    # DlcIds: every DLC app, including DLC without a dedicated depot (unlock-only)
+    return @{ Base = $base; Dlc = $dlc; Depots = $depots; DlcIds = @($dlcIds | Select-Object -Unique) }
 }
 
 function Get-HttpErrorMessage {
@@ -205,7 +215,12 @@ try {
 
     New-Item -ItemType Directory -Force -Path $luaDir | Out-Null
     $directLuaPath = Join-Path $luaDir "$AppId.lua"
-    $dlcLuaPath = Join-Path $luaDir "$AppId-dlc.lua"
+    # HubcapTools only loads <appid>.lua and <appid>_dlc.lua (underscore)
+    $dlcLuaPath = Join-Path $luaDir "${AppId}_dlc.lua"
+    $legacyDlcLuaPath = Join-Path $luaDir "$AppId-dlc.lua"
+    if ((Test-Path -LiteralPath $legacyDlcLuaPath) -and -not (Test-Path -LiteralPath $dlcLuaPath)) {
+        Move-Item -LiteralPath $legacyDlcLuaPath -Destination $dlcLuaPath
+    }
     $manifestDir = Join-Path $steamRoot "depotcache"
     $manifestMarkerPath = Join-Path (Join-Path $steamRoot "config") "hubcapplugin-manifest-$AppId.txt"
 
@@ -213,9 +228,9 @@ try {
         $hasDlcInMain = $false
         if (Test-Path -LiteralPath $directLuaPath) {
             $parts = Split-LuaSections -Path $directLuaPath -AppId $AppId
-            $hasDlcInMain = $parts.Depots.Count -gt 0
+            $hasDlcInMain = $parts.DlcIds.Count -gt 0
         }
-        $dlcExists = (Test-Path -LiteralPath $dlcLuaPath) -or $hasDlcInMain
+        $dlcExists = (Test-Path -LiteralPath $dlcLuaPath) -or (Test-Path -LiteralPath $legacyDlcLuaPath) -or $hasDlcInMain
         Write-JsonAndExit @{ success = $true; appId = $AppId; exists = (Test-Path -LiteralPath $directLuaPath); dlcExists = $dlcExists }
     }
 
@@ -250,16 +265,18 @@ try {
 
         if (Test-Path -LiteralPath $directLuaPath) {
             $parts = Split-LuaSections -Path $directLuaPath -AppId $AppId
-            if ($parts.Depots.Count -gt 0) {
+            if ($parts.DlcIds.Count -gt 0) {
                 $removed += Remove-ManifestsForDepots -Depots $parts.Depots -ManifestDir $manifestDir
-                Set-Content -LiteralPath $directLuaPath -Value $parts.Base -Encoding UTF8
+                Write-LuaFile -Path $directLuaPath -Lines $parts.Base
             }
         }
 
-        if (Test-Path -LiteralPath $dlcLuaPath) {
-            $dlcParts = Split-LuaSections -Path $dlcLuaPath -AppId $AppId
-            $removed += Remove-ManifestsForDepots -Depots $dlcParts.Depots -ManifestDir $manifestDir
-            Remove-Item -LiteralPath $dlcLuaPath -Force
+        foreach ($dlcFile in @($dlcLuaPath, $legacyDlcLuaPath)) {
+            if (Test-Path -LiteralPath $dlcFile) {
+                $dlcParts = Split-LuaSections -Path $dlcFile -AppId $AppId
+                $removed += Remove-ManifestsForDepots -Depots $dlcParts.Depots -ManifestDir $manifestDir
+                Remove-Item -LiteralPath $dlcFile -Force
+            }
         }
 
         Remove-IfExists -Path $downloadDir
@@ -279,14 +296,22 @@ try {
         New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
         Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
 
-        $luaFile = Get-ChildItem -LiteralPath $extractDir -Recurse -File -Filter "*.lua" | Select-Object -First 1
-        if (-not $luaFile) { throw "Downloaded ZIP did not contain a .lua file." }
+        $luaFiles = @(Get-ChildItem -LiteralPath $extractDir -Recurse -File -Filter "*.lua")
+        if ($luaFiles.Count -eq 0) { throw "Downloaded ZIP did not contain a .lua file." }
 
-        $parts = Split-LuaSections -Path $luaFile.FullName -AppId $AppId
+        $parts = @{ Dlc = New-Object System.Collections.Generic.List[string]; Depots = @(); DlcIds = @() }
+        foreach ($luaFile in $luaFiles) {
+            $filePart = Split-LuaSections -Path $luaFile.FullName -AppId $AppId
+            foreach ($line in $filePart.Dlc) { $parts.Dlc.Add($line) }
+            $parts.Depots += $filePart.Depots
+            $parts.DlcIds += $filePart.DlcIds
+        }
+        $parts.DlcIds = @($parts.DlcIds | Select-Object -Unique)
 
-        if ($parts.Depots.Count -eq 0) { throw "This game has no DLC depot." }
+        if ($parts.DlcIds.Count -eq 0) { throw "This game has no DLC depot." }
 
-        Set-Content -LiteralPath $dlcLuaPath -Value $parts.Dlc -Encoding UTF8
+        Write-LuaFile -Path $dlcLuaPath -Lines $parts.Dlc
+        Remove-IfExists -Path $legacyDlcLuaPath
 
         $copied = @()
         foreach ($depot in $parts.Depots) {
@@ -297,7 +322,8 @@ try {
             }
         }
 
-        if ($copied.Count -eq 0) { throw "No DLC manifest found in the archive." }
+        # unlock-only DLC have no depot, so no manifest is expected for them
+        if ($parts.Depots.Count -gt 0 -and $copied.Count -eq 0) { throw "No DLC manifest found in the archive." }
 
         Remove-IfExists -Path $downloadDir
         Remove-EmptyDirectory -Path $tempRoot

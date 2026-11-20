@@ -19,16 +19,23 @@ DLC unlock the same way, your Hubcap key is set in Millennium’s settings, and 
 
 ### On the store page
 - **Add to my library**: downloads the game’s script and manifests from [hubcapmanifest.com](https://hubcapmanifest.com), then installs them in the right places (HubcapTool’s Lua folder and Steam’s `depotcache`). The game shows up right away, no Steam restart needed.
+- **Linked games**: some games are split into several Steam apps (e.g. Call of Duty: Black Ops II campaign / multiplayer / zombies). Adding or removing one also adds or removes the others.
 - **Remove from my library**: if the game is already added, the button turns red and removes the script and its manifests.
-- **Unlock the DLC**: on a game you already own that has DLC, the button only offers the DLC. They go into a separate file (`<appid>-dlc.lua`) and can be removed the same way, without touching the game.
+- **Unlock the DLC**: on a game you already own that has DLC, the button only offers the DLC. They go into a separate file (`<appid>_dlc.lua`) and can be removed the same way, without touching the game. DLC without a depot (content already shipped with the game) are unlocked too.
 - **Extra protection**: before adding, the plugin reads the game’s page; if it uses third-party protection (Denuvo…), a dialog warns you that a separate fix will be needed after installing.
 - **A Steam-styled button**, aligned with the page’s other buttons (CS.RIN.RU Enhanced, SteamDB…), showing its live state: “Adding…”, “Added”, or the error in plain words.
 - **Readable error messages**: invalid key, daily quota reached, game not available yet, HubcapTool not installed, corrupted download.
+
+### In the library
+- **Colours**: games added with Hubcap, owned games whose DLC you unlocked, and owned games that have DLC to unlock each get their own colour in the list. Each colour can be turned on or off and picked freely.
+- **Right-click**: “Remove from Hubcap” on an added game, “Unlock DLC” or “Re-lock DLC” on a game that has some. Each entry can be turned off.
 
 ### In Millennium’s settings
 - **Your Hubcap key**: paste it, save, and it is written to HubcapTool’s `config.yaml`. Only its first and last 4 characters are shown back.
 - **Daily quota**: “Today: X / Y downloads”, read straight from your Hubcap account.
 - **Install status**: the plugin tells you whether HubcapTool is ready or needs to be run once first.
+- **Add by AppID**: add or remove a game by typing its AppID, without opening its store page.
+- **Every HubcapTool setting**: each `config.yaml` option (switches, lists, status, logs…) can be set from the panel, with a description and an example. Lists are edited in a text box, one entry per line.
 
 ### Languages
 The interface follows Steam’s language: **English, French, German, Spanish (Spain and Latin America), Italian, Portuguese (Portugal and Brazil), Russian, Polish, Dutch, Danish, Swedish, Norwegian, Finnish, Czech, Hungarian, Romanian, Bulgarian, Greek, Turkish, Ukrainian, Japanese, Korean, Chinese (Simplified and Traditional), Thai, Vietnamese and Indonesian**.
@@ -53,7 +60,7 @@ The interface follows Steam’s language: **English, French, German, Spanish (Sp
 - **“Invalid Hubcap key”** or **“Daily quota reached”**: check your key and quota in the plugin’s settings; the quota resets daily on Hubcap’s side.
 - **“Game not available yet”**: Hubcap doesn’t have this game’s files yet. Try again later.
 - **The game doesn’t appear in your library?** It is normally hot-loaded. If it isn’t, fully restart Steam (right-click the tray icon → Exit).
-- **Connections**: only `hubcapmanifest.com` (downloads and quota, with your key) and the Steam store API (protection detection).
+- **Connections**: only `hubcapmanifest.com` (downloads and quota, with your key) and the Steam store API (protection detection, DLC lists for the library colours).
 - **Uninstalling**: disable **Hubcap** in Millennium, then delete the `<Steam>\millennium\plugins\hubcap-add` folder. Games already added stay in HubcapTool’s Lua folder: remove them with the button before uninstalling if you no longer want them.
 - **Found a bug?** Open an [issue](../../issues) with the game’s page and the message shown on the button.
 
@@ -61,7 +68,7 @@ The interface follows Steam’s language: **English, French, German, Spanish (Sp
 
 - `plugin.json`: plugin declaration for Millennium.
 - `.millennium/Dist/webkit.js`: the button injected on store pages.
-- `.millennium/Dist/index.js`: the settings panel (key and quota).
+- `.millennium/Dist/index.js`: the settings panel (key, quota, HubcapTool settings) and the library additions (colours, right-click).
 - `backend/main.lua`: the Lua backend called by the interface (config reading, game state, starting downloads).
 - `backend/scripts/download_lua.ps1`: downloading, extracting and installing Hubcap files.
 
